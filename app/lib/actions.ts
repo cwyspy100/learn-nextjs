@@ -4,31 +4,55 @@ import { z } from "zod";
 import { sql } from "@vercel/postgres";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { signIn } from "@/auth";
+import { AuthError } from "next-auth";
+
 
 const FormSchema = z.object(
     {
-        id: z.string(),
+        id: z.string({
+            invalid_type_error: 'Please select a customer.',
+        }),
         customerId: z.string(),
-        amount: z.coerce.number(),
+        amount: z.coerce.number().gt(0, {
+            message: 'Please enter an amount greater than $0.'
+        }),
         date: z.string(),
-        status: z.enum(['pending', 'paid']),
+        status: z.enum(['pending', 'paid'], {
+            invalid_type_error: 'Please select an invoice status.',
+        }),
     }
 );
 
 const CreateInvoice = FormSchema.omit({ id: true, date: true });
 
-export async function createInvoice(formData: FormData) {
+export type State = {
+    errors?: {
+        customerId?: string[];
+        amount?: string[];
+        status?: string[];
+    };
+    message?: string | null;
+};
 
-    const { customerId, amount, status } = CreateInvoice.parse({
+export async function createInvoice(prevState: State, formData: FormData) {
+
+    const validatedFields = CreateInvoice.safeParse({
         customerId: formData.get('customerId'),
         amount: formData.get('amount'),
         status: formData.get('status'),
     });
-    // const rawFormData = {
-    //     customeId: formData.get('customerId'),
-    //     amount: formData.get('amount'),
-    //     status: formData.get('status'),
-    // };
+
+    if (!validatedFields.success) {
+        return {
+            errors: validatedFields.error.flatten().fieldErrors,
+            message: 'Missing Fields. Failed to Create Invoice.',
+        };
+    }
+
+    console.info('validatedFields :'+ validatedFields);
+
+    const { customerId, amount, status } = validatedFields.data;
     const amountInCents = amount * 100;
     const date = new Date().toISOString().split('T')[0];
     console.log(customerId, amountInCents, status, date);
@@ -50,13 +74,24 @@ export async function createInvoice(formData: FormData) {
 
 
 const UpdateInvoice = FormSchema.omit({ id: true, date: true });
-export async function updateInvoice(id: string, formData: FormData) {
-    const { customerId, amount, status } = UpdateInvoice.parse({
+
+export async function updateInvoice(id: string, preState: State, formData: FormData) {
+
+    const validatedFields = UpdateInvoice.safeParse({
         customerId: formData.get('customerId'),
         amount: formData.get('amount'),
         status: formData.get('status'),
     });
 
+    if (!validatedFields.success) {
+        return {
+            errors: validatedFields.error.flatten().fieldErrors,
+            messge: 'Missing Fields. Failed to Update Invoice',
+        };
+    }
+
+    
+    const { customerId, amount, status } = validatedFields.data;
     const amountInCents = amount * 100;
     const date = new Date().toISOString().split('T')[0];
 
@@ -84,5 +119,23 @@ export async function deleteInvoice(id: string) {
         return { message: 'Deleted Invoice.' };
     } catch (error) {
         return { message: 'Database Error: Failed to Delete Invoice.' };
+    }
+}
+
+
+export async function authenticate(pervState: string | undefined, formData: FormData, ) {
+    try {
+        await signIn('credentials', formData);   
+    } catch (error) {
+        if (error instanceof AuthError) {
+            switch (error.type) {
+                case 'CredentialsSignin':
+                    return 'Invalid credentials.'
+
+                default:
+                    return 'Something go wrong .'
+            }
+        }
+        throw error;
     }
 }
